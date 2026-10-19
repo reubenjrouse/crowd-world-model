@@ -14,7 +14,7 @@ An AI that watches 2 seconds of a crowd from above and imagines the next 10 seco
 |---|---|
 | ![juelich](assets/juelich.gif) | ![eindhoven](assets/eindhoven.gif) |
 
-*Left half of each GIF: what really happened. Right half: what the AI imagined, with people coloured by the exit it thinks they're heading for.*
+*Left: what really happened. Right: what the AI imagined, with people coloured by the exit it thinks they're heading for. Bottom: people in view, real (black) vs the AI's forecast (red) and its 80% range (shaded). Real clips are typical moments (the model's median accuracy on that recording), not hand-picked.*
 
 ## How it works
 
@@ -22,7 +22,7 @@ An AI that watches 2 seconds of a crowd from above and imagines the next 10 seco
 2. **Synthetic data.** 15,000 simulated scenes (halls, platforms, bottlenecks) with gates, train arrivals and hidden goals.
 3. **The picture.** Every scene becomes a 64×64 map (0.25 m per cell, 5 frames per second): crowd density, walls, exits, gates and arrivals.
 4. **The model.** A recurrent memory that watches the frames, then predicts how people *move* between neighbouring cells. People can't vanish, appear from nowhere or walk through walls. A small random "mood" variable lets it imagine several possible futures.
-5. **Real data.** It's fine-tuned on real recordings (Jülich lab experiments, Eindhoven Centraal station platform), always tested on runs and days it never saw.
+5. **Real data.** It's fine-tuned on real recordings (Jülich lab experiments, Eindhoven Centraal station platform), always tested on runs and days it never saw. Synthetic scenes are also shown through smaller "camera views", so it learns that people walk in and out at the edge of the picture.
 
 ## Results
 
@@ -30,16 +30,18 @@ Error 10 s ahead, compared with assuming "nothing moves" (1.00 means no better; 
 
 | Test set (never seen in training) | Keep walking straight | **This model** |
 |---|---|---|
-| Synthetic scenes | – | **0.69** |
-| Jülich bottlenecks | 1.3–1.5 | **0.55** |
-| Lab crossings | 1.3–1.5 | **0.83** |
-| Eindhoven platform (days 7–9) | 1.3–1.5 | **0.91** |
+| Synthetic scenes | 1.25 | **0.55** |
+| Jülich bottlenecks | 1.52 | **0.51** |
+| Lab crossings | 1.39 | **0.79** |
+| Eindhoven platform (days 7–9) | 1.30 | **0.86** |
 
 - **Guessing destinations:** 96% correct on synthetic scenes, 88% on real crossings, 85% on the real platform.
 - **Guessing hurry:** it ranks the more motivated crowd correctly in 10 of 11 real experiment pairs.
-- **Danger odds:** better than the base rate on every test set.
+- **Headcount ranges:** its 80% range contains the real headcount 10 s later in 76–83% of test cases (66% at crossings). The range is calibrated on training runs.
+- **People in and out:** over 10 s it gets the flow budget roughly right (Eindhoven: 17 in and 18 out for real, vs 20 and 22 predicted).
+- **Danger odds:** much better than guessing on synthetic scenes, Jülich and crossings; no better than guessing on the Eindhoven platform.
 
-**Limitations:** it predicts crowd density, not individual people. Headcount is less accurate where people walk in or out at the camera's edge. Its sampled futures are noisy on real data, so the "most likely" future is the one to trust. The real datasets are small.
+**Limitations:** it predicts crowd density, not individual people. It can't see surges coming, such as a group still downstairs about to walk up, so its forecast is a smooth average. On the real platform it is only modestly better than "nothing moves". Its own imagined futures vary too little in headcount, so the ranges come from calibration instead. The real datasets are small.
 
 ## Run it
 
@@ -65,11 +67,14 @@ python scripts/train_wm.py --data v3 --name final_real --init_from final_pre --z
     --prior_every 2 --prior_mean --horizon 30 --batch 8 --steps 5000 --lr 1e-4 \
     --real juelich,crossing,eindhoven \
     --real_holdout "caserne_bottleneck_2006__b120,caserne_bottleneck_2006__b200,hermes_bottleneck_2009__ao-360-400,crossing_90_d_2,crossing_90_d_8,crossing_90_e_3,day7_*,day8_*,day9_*"
+# (then two more 5000-step fine-tunes with the same settings: final_real_b from final_real,
+#  and final_real_c from final_real_b with --crop 0.5)
 
-# 5. Test and make GIFs
-python scripts/final_check.py --run final_real
-python scripts/show_people.py --run final_real --dir data/processed/real/juelich/caserne_bottleneck_2006__b120
-python scripts/show_whatif.py --run final_real
+# 5. Test, calibrate headcount ranges, make GIFs
+python scripts/final_check.py --run final_real_c
+python scripts/calibrate_bands.py --run final_real_c
+python scripts/show_people.py --run final_real_c --start typical --dir data/processed/real/juelich/caserne_bottleneck_2006__b120
+python scripts/show_whatif.py --run final_real_c
 ```
 
 ## Code

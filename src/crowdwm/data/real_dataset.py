@@ -41,10 +41,11 @@ def open_boundary(r, grid: Grid, static, min_events: int = 3, reach_m: float = 1
 
 
 def _write(out_dir: Path, traj, walkable, exits, hurry: float, meta: dict, grid: Grid,
-           arrivals=None) -> Path:
+           arrivals=None, entrances=()) -> Path:
     """traj: DataFrame with id, t [s], x, y and optional target (exit slot index).
     arrivals: optional function (frame k) -> list of polygons where people are scheduled
-    to arrive at that frame (e.g. train doors while unloading)."""
+    to arrive at that frame (e.g. train doors while unloading).
+    entrances: exits that people also come in through (e.g. stairs); marked as open edge too."""
     r = resample(traj.assign(t=traj["t"] - traj["t"].min()), FPS)
     k = r["k"].to_numpy()
     order = np.argsort(k, kind="stable")
@@ -54,7 +55,10 @@ def _write(out_dir: Path, traj, walkable, exits, hurry: float, meta: dict, grid:
     static = static_layers(grid, walkable, exits)
     out_dir.mkdir(parents=True, exist_ok=True)
     from crowdwm.data.sim_dataset import first_appearances, pack_arrivals
-    extra_static = {"boundary": open_boundary(r, grid, static)}
+    boundary = open_boundary(r, grid, static)
+    for poly in entrances:
+        boundary |= (shapely.intersects(grid.cell_boxes(), poly) & (static[0] == 0)).astype(np.uint8)
+    extra_static = {"boundary": boundary}
     # Where people walked into view (shown to the model for watched frames only)
     extra = {"inflow": pack_arrivals(first_appearances(k, r["id"].to_numpy(), r[["x", "y"]].to_numpy(),
                                                        n_frames, grid))}
@@ -271,7 +275,7 @@ def prepare_eindhoven(n_per_day: int = 10, before_s: float = 30, after_s: float 
                         clean_destinations=float(clean[seg.id.unique()].mean()))
             out.append(_write(REAL_DIR / "eindhoven" / name, seg[["id", "t", "x", "y", "target"]],
                               walkable, exits, float("nan"), meta, grid,   # no hurry label
-                              arrivals=arriving))
+                              arrivals=arriving, entrances=[stairs, walk_on]))
     return out
 
 

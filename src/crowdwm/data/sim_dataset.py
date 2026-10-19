@@ -137,6 +137,73 @@ def make_item(s: dict, start: int, length: int, context: int = 10, family: int =
                 family=family, arrivals=window_arrivals(s, start, length, context))
 
 
+def crop_view(item: dict, s: dict, start: int, context: int, rng: np.random.Generator,
+              min_cut: int = 4, min_size: int = 24) -> dict:
+    """Pretend a camera saw only part of a synthetic scene, like real recordings do.
+
+    A random rectangle that keeps every exit in view; outside it everything is marked
+    not walkable and people are dropped. Where the room continues past the rectangle, the
+    cut becomes an open edge (boundary layer), so people stream in and out there. Observed
+    walk-ins (watched frames) are recomputed for the cropped view. Returns the item
+    unchanged when no side can be cut by at least `min_cut` cells."""
+    from scipy.ndimage import binary_dilation
+
+    static, size = item["static"], item["static"].shape[-1]
+    walk = static[0] == 0
+    exits = (static[1:1 + MAX_EXITS].max(0) > 0) | (item["gate_masks"].max(0) > 0)
+    if not walk.any() or not exits.any():
+        return item
+    wr, wc = np.nonzero(walk)
+    er, ec = np.nonzero(exits)
+    lo = [wr.min(), wc.min()]                     # walkable box (top, left) / (bottom, right)
+    hi = [wr.max(), wc.max()]
+    elo, ehi = [er.min(), ec.min()], [er.max(), ec.max()]
+    new_lo, new_hi = list(lo), list(hi)
+    for ax in range(2):
+        if rng.random() < 0.6 and elo[ax] - 1 > lo[ax]:
+            new_lo[ax] = int(rng.integers(lo[ax], elo[ax]))
+        if rng.random() < 0.6 and ehi[ax] + 1 < hi[ax]:
+            new_hi[ax] = int(rng.integers(ehi[ax] + 1, hi[ax] + 1))
+        while new_hi[ax] - new_lo[ax] + 1 < min_size and (new_lo[ax] > lo[ax] or new_hi[ax] < hi[ax]):
+            if new_lo[ax] > lo[ax]:
+                new_lo[ax] -= 1
+            if new_hi[ax] < hi[ax]:
+                new_hi[ax] += 1
+    if max(max(new_lo[a] - lo[a], hi[a] - new_hi[a]) for a in range(2)) < min_cut:
+        return item
+    view = np.zeros((size, size), bool)
+    view[new_lo[0]:new_hi[0] + 1, new_lo[1]:new_hi[1] + 1] = True
+
+    out = dict(item)
+    st = static.copy()
+    st[0] = np.where(view, st[0], 1)
+    edge = view & walk & binary_dilation(walk & ~view, iterations=2) & ~exits
+    st[-1] = np.maximum(st[-1], edge.astype(st.dtype))
+    out["static"] = st
+
+    x0, y0 = item["x0"], item["y0"]
+    col = np.clip(((item["xy"][:, 0] - x0) / 0.25).astype(int), 0, size - 1)
+    row = np.clip(((item["xy"][:, 1] - y0) / 0.25).astype(int), 0, size - 1)
+    keep = view[row, col]
+    for key in ["xy", "target", "frame"]:
+        out[key] = item[key][keep]
+    lo_pt = s["ptr"][start]
+    pid = s["pid"][lo_pt:lo_pt + len(keep)][keep]
+    row, col, frame = row[keep], col[keep], out["frame"]
+
+    length = len(item["gate_state"])
+    arr = unpack_arrivals(s, start, length).astype(bool) & view
+    arr[0] |= unpack_arrivals(s, start, 1, key="inflow")[0].astype(bool) & view
+    prev = set(pid[frame == 0].tolist())
+    for f in range(1, context):
+        here = frame == f
+        new = here & ~np.isin(pid, list(prev))
+        arr[f, row[new], col[new]] = True
+        prev = set(pid[here].tolist())
+    out["arrivals"] = arr.astype(np.uint8)
+    return out
+
+
 FAMILY_NAMES = ["hall", "platform", "bottleneck"]
 
 
@@ -151,10 +218,13 @@ class SimWindows(Dataset):
     """
 
     def __init__(self, root=None, split: str = "train", length: int = 30, stride: int = 5,
-                 max_scenes: int | None = None, dirs: list | None = None, context: int = 10):
+                 max_scenes: int | None = None, dirs: list | None = None, context: int = 10,
+                 crop: float = 0.0):
         """Pass `dirs` to use an explicit list of scene folders (e.g. real runs) instead.
-        context: number of watched frames (observed walk-ins are only shown for those)."""
-        self.context = context
+        context: number of watched frames (observed walk-ins are only shown for those).
+        crop: fraction of windows seen through a smaller camera view (see crop_view)."""
+        self.context, self.crop = context, crop
+        self.rng = np.random.default_rng()
         if dirs is None:
             roots = [root] if isinstance(root, (str, Path)) else list(root)
             dirs = sorted(d for r in roots for d in Path(r).glob("scene_*") if (d / "cache.npz").exists()
@@ -182,7 +252,11 @@ class SimWindows(Dataset):
 
     def __getitem__(self, j):
         i, k = self.index[j]
-        return make_item(self._scene(i), k, self.length, self.context, family=self.family[i])
+        s = self._scene(i)
+        item = make_item(s, k, self.length, self.context, family=self.family[i])
+        if self.crop and self.rng.random() < self.crop:
+            item = crop_view(item, s, k, self.context, self.rng)
+        return item
 
 
 def collate(items):

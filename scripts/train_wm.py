@@ -151,6 +151,8 @@ def main():
     p.add_argument("--init_from", default=None,
                    help="start from another run's best.pt weights (fresh optimiser and schedule)")
     p.add_argument("--no_augment", action="store_true", help="disable random rotations/mirroring")
+    p.add_argument("--crop", type=float, default=0.0,
+                   help="fraction of synthetic training windows seen through a smaller camera view")
     p.add_argument("--real", default=None,
                    help="real dataset(s) to mix in, comma-separated, e.g. juelich,crossing "
                         "(folders under data/processed/real)")
@@ -168,7 +170,7 @@ def main():
 
     length = a.context + a.horizon
     root = [ROOT / "data" / "processed" / "sim" / d for d in a.data.split(",")]
-    train = SimWindows(root, "train", length, stride=3, max_scenes=a.max_scenes)
+    train = SimWindows(root, "train", length, stride=3, max_scenes=a.max_scenes, crop=a.crop)
     val = (SimWindows(root, "train", length, stride=10, max_scenes=a.max_scenes)
            if a.eval_on_train else SimWindows(root, "val", length, stride=10))
     print(f"train: {len(train):,} windows from {len(train.dirs)} scenes; val: {len(val):,} windows")

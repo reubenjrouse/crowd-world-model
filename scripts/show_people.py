@@ -2,13 +2,14 @@
 
 Left: real people. Right: people moved by the model's predicted flow (see crowdwm.viz),
 coloured by the exit the model thinks each is heading to. Bottom: people in view over
-time, real vs model. Works for any cached scene (synthetic or real).
+time, real vs model (most likely, plus its calibrated 80% range). Works for any cached scene (synthetic or real).
 Saves outputs/figures/people_<run>_<scene>.gif
 
-Run:  python scripts/show_people.py --run final_real --dir data/processed/real/juelich/caserne_bottleneck_2006__b120
+Run:  python scripts/show_people.py --run final_real_c --start typical --dir data/processed/real/juelich/caserne_bottleneck_2006__b120
 """
 
 import argparse
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -28,7 +29,7 @@ p = argparse.ArgumentParser()
 p.add_argument("--run", default="final_real")
 p.add_argument("--ckpt", default="last.pt")
 p.add_argument("--dir", required=True)
-p.add_argument("--start", default="auto")
+p.add_argument("--start", default="auto", help="auto (busiest moment), typical (median-score window) or a frame")
 p.add_argument("--context", type=int, default=10)
 p.add_argument("--horizon", type=int, default=50)
 p.add_argument("--title", default=None)
@@ -38,17 +39,37 @@ d = Path(a.dir)
 s = dict(np.load(d / "cache.npz"))
 length = a.context + a.horizon
 n_frames = len(s["ptr"]) - 1
+model = load_checkpoint(ROOT / "outputs/runs" / a.run / a.ckpt)
+splatter = TorchSplatter(device="cuda")
+
+
+def window_score(k):
+    """Model error 10 s ahead / 'nothing moves' error, for the window starting at frame k."""
+    W = make_batch(collate([make_item(s, k, length, a.context)]), splatter, length)
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        out, _, _ = model(W["density"], W["static"], W["gates"], W["exit_mask"], a.context,
+                          arrivals=W["arrivals"], sample=False)
+    true = W["density"][0, :, 0].float()
+    return ((out[0, -1, 0].float() - true[-1]).abs().sum() /
+            (true[a.context - 1] - true[-1]).abs().sum().clamp(min=1e-6)).item()
+
+
 if a.start == "auto":   # just before a train unloads if there is one, else a busy moment
     arr = np.flatnonzero(unpack_arrivals(s, 0, n_frames).reshape(n_frames, -1).any(1))
     counts = np.diff(s["ptr"])
     k0 = int(arr[0] - a.context) if len(arr) else int(np.argmax(counts[:max(1, n_frames - length)]))
+elif a.start == "typical":   # the window with the model's median score in this recording
+    cand = list(range(0, n_frames - length - 1, 10))
+    scores = [window_score(k) for k in cand]
+    k0 = cand[int(np.argsort(scores)[len(scores) // 2])]
+    print(f"typical window: score {np.median(scores):.2f} (range {min(scores):.2f}-{max(scores):.2f} "
+          f"over {len(cand)} windows)")
 else:
     k0 = int(a.start)
 k0 = int(np.clip(k0, 0, n_frames - length - 1))
 
-model = load_checkpoint(ROOT / "outputs/runs" / a.run / a.ckpt)
 model.record_flux = True
-B = make_batch(collate([make_item(s, k0, length, a.context)]), TorchSplatter(device="cuda"), length)
+B = make_batch(collate([make_item(s, k0, length, a.context)]), splatter, length)
 with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
     pred, dest, _ = model(B["density"], B["static"], B["gates"], B["exit_mask"], a.context,
                           arrivals=B["arrivals"], sample=False)
@@ -63,6 +84,17 @@ ai = move_people(last, [f[0].cpu().numpy() for f in model.flux[c0:]],
 pred_count = np.concatenate([B["density"][0, :a.context, 0].sum((-1, -2)).cpu().numpy(),
                              pred[0, c0:, 0].float().sum((-1, -2)).cpu().numpy()])
 real_count = B["density"][0, :, 0].sum((-1, -2)).cpu().numpy()
+# 80% range around the forecast, from the model's track record on training runs
+# (scripts/calibrate_bands.py); none if not calibrated
+band = None
+bands_file = ROOT / "outputs/runs" / a.run / "count_bands.json"
+if bands_file.exists():
+    key = d.parent.name if d.parent.parent.name == "real" else "synthetic"
+    cal = json.loads(bands_file.read_text()).get(key)
+    if cal:
+        fc = pred_count[a.context:]
+        band = np.stack([np.r_[pred_count[c0], fc + np.array(cal["lo"])],
+                         np.r_[pred_count[c0], fc + np.array(cal["hi"])]])
 
 extent = [s["x0"], s["x0"] + 16, s["y0"], s["y0"] + 16]
 walls = s["static"][0].astype(float)
@@ -91,6 +123,8 @@ arr_imgs = [ax.imshow(np.zeros((64, 64, 4)), origin="lower", extent=extent, zord
 axc = fig.add_subplot(gs[1, :])
 tt = np.arange(length) / 5
 axc.plot(tt, real_count, "k-", lw=2, label="real")
+if band is not None:
+    axc.fill_between(tt[c0:], band[0], band[1], color="tab:red", alpha=0.15, label="AI's 80% range")
 axc.plot(tt, pred_count, color="tab:red", lw=2, label="AI (most likely future)")
 axc.axvspan(0, c0 / 5, color="0.9")
 on = np.flatnonzero(arrivals[a.context:].reshape(a.horizon, -1).any(1))
@@ -99,7 +133,7 @@ if len(on):
                 label="scheduled arrivals (known)")
 cursor = axc.axvline(0, color="tab:blue")
 axc.set(xlabel="seconds", ylabel="people in view")
-axc.legend(loc="upper left", fontsize=8, ncol=3)
+axc.legend(loc="upper left", fontsize=8, ncol=4)
 title = fig.suptitle("")
 fig.tight_layout(rect=(0, 0, 1, 0.95))
 
@@ -135,4 +169,5 @@ anim = FuncAnimation(fig, update, frames=length, blit=False)
 out = ROOT / "outputs/figures" / f"people_{a.run}_{d.name}.gif"
 anim.save(out, writer=PillowWriter(fps=5), dpi=65)
 print("saved", out, "| start frame", k0, "| real people at end", int(round(real_count[-1])),
-      "| AI expects", int(round(pred_count[-1])))
+      "| AI expects", int(round(pred_count[-1])),
+      f"(80% range {band[0, -1]:.0f}-{band[1, -1]:.0f})" if band is not None else "")
