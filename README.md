@@ -5,14 +5,15 @@ An AI that watches 2 seconds of a crowd from above and imagines the next 10 seco
 - It guesses what it can't see: where each person is heading and how rushed they are.
 - You can ask "what if?": close a gate, or have a train arrive, and it shows how the crowd would react.
 - It gives odds of dangerous crowding instead of just one guess.
+- It can **plan**: it imagines every gate plan and recommends the safest.
 
-| Synthetic station | What if a gate closes? |
-|---|---|
-| ![synthetic](assets/synthetic.gif) | ![what-if](assets/whatif.gif) |
+![planner](assets/planner.gif)
 
-| Real lab bottleneck (Jülich) | Real train platform (Eindhoven) |
-|---|---|
-| ![juelich](assets/juelich.gif) | ![eindhoven](assets/eindhoven.gif) |
+*The AI watches 2 s of a crowd, imagines 10 s under each gate plan (top) and recommends the one with the least crowding. Bottom: what really happens under each plan (re-simulated). Here closing gate B breaks up the queue, and the AI saw it coming.*
+
+| Synthetic station | Real lab bottleneck (Jülich) | Real train platform (Eindhoven) |
+|---|---|---|
+| ![synthetic](assets/synthetic.gif) | ![juelich](assets/juelich.gif) | ![eindhoven](assets/eindhoven.gif) |
 
 *Left: what really happened. Right: what the AI imagined, with people coloured by the exit it thinks they're heading for. Bottom: people in view, real (black) vs the AI's forecast (red) and its 80% range (shaded). Real clips are typical moments (the model's median accuracy on that recording), not hand-picked.*
 
@@ -34,6 +35,14 @@ Error 10 s ahead, compared with assuming "nothing moves" (1.00 means no better; 
 | Jülich bottlenecks | 1.52 | **0.51** |
 | Lab crossings | 1.39 | **0.79** |
 | Eindhoven platform (days 7–9) | 1.30 | **0.86** |
+
+**"What if?" questions** (1,034 held-out moments, each re-simulated under 2–3 gate plans):
+
+- **Direction of a gate action's effect:** correct 93% of the time, for each exit. It predicts about 73% of the true size.
+- **Picking the safest plan:** when changing a gate truly makes things safer, the AI finds the right change 80% of the time. Overall it picks the least-crowded plan 80% of the time, versus 72% for "never touch the gates" and 49% for a random pick.
+- **Crowd map 10 s ahead:** 0.28 against "nothing moves".
+
+**Other skills:**
 
 - **Guessing destinations:** 96% correct on synthetic scenes, 88% on real crossings, 85% on the real platform.
 - **Guessing hurry:** it ranks the more motivated crowd correctly in 10 of 11 real experiment pairs.
@@ -71,10 +80,12 @@ python scripts/train_wm.py --data v3 --name final_real --init_from final_pre --z
 #  and final_real_c from final_real_b with --crop 0.5)
 
 # 5. Test, calibrate headcount ranges, make GIFs
+python scripts/make_whatif.py --split test --per_scene 4      # what-if moments
+python scripts/eval_whatif.py --run final_real_c --save
+python scripts/show_planner.py --run final_real_c --moment scene_001319_k225
 python scripts/final_check.py --run final_real_c
 python scripts/calibrate_bands.py --run final_real_c
 python scripts/show_people.py --run final_real_c --start typical --dir data/processed/real/juelich/caserne_bottleneck_2006__b120
-python scripts/show_whatif.py --run final_real_c
 ```
 
 ## Code
@@ -90,4 +101,4 @@ python scripts/show_whatif.py --run final_real_c
 
 ## Coming next
 
-A planner that picks the best gate plan, an online demo, and the synthetic dataset as a public benchmark.
+An online demo, and the what-if dataset as a public benchmark.
