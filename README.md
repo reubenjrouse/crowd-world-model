@@ -1,104 +1,84 @@
 # Crowd World Model
 
-An AI that watches 2 seconds of a crowd from above and imagines the next 10 seconds.
-
-- It guesses what it can't see: where each person is heading and how rushed they are.
-- You can ask "what if?": close a gate, or have a train arrive, and it shows how the crowd would react.
-- It gives odds of dangerous crowding instead of just one guess.
-- It can **plan**: it imagines every gate plan and recommends the safest.
+An AI that watches 2 seconds of a crowd from above, guesses where everyone is heading, and imagines the next 10 seconds. Ask it "what if I close this gate?" and it recommends the safest plan.
 
 ![planner](assets/planner.gif)
 
-*The AI watches 2 s of a crowd, imagines 10 s under each gate plan (top) and recommends the one with the least crowding. Bottom: what really happens under each plan (re-simulated). Here closing gate B breaks up the queue, and the AI saw it coming.*
+*Top: the AI imagines each gate plan and picks the least crowded one. Bottom: what really happens. Closing gate B breaks up the queue, and the AI saw it coming.*
 
 | Synthetic station | Real lab bottleneck (Jülich) | Real train platform (Eindhoven) |
 |---|---|---|
 | ![synthetic](assets/synthetic.gif) | ![juelich](assets/juelich.gif) | ![eindhoven](assets/eindhoven.gif) |
 
-*Left: what really happened. Right: what the AI imagined, with people coloured by the exit it thinks they're heading for. Bottom: people in view, real (black) vs the AI's forecast (red) and its 80% range (shaded). Real clips are typical moments (the model's median accuracy on that recording), not hand-picked.*
+*Left: reality. Right: the AI's forecast (dots coloured by the exit it thinks each person wants). Bottom: headcount, real (black) vs AI (red) with its 80% range. Typical moments, not hand-picked.*
+
+**Dataset:** [reubenrouse/crowd-whatif](https://huggingface.co/datasets/reubenrouse/crowd-whatif) on Hugging Face. It has 15,000 simulated scenes with hidden destinations, plus 9,145 "what if?" moments, each replayed under every gate plan.
 
 ## How it works
 
-1. **Simulator.** A crowd simulator ([JuPedSim](https://www.jupedsim.org)) tuned to match real lab experiments.
-2. **Synthetic data.** 15,000 simulated scenes (halls, platforms, bottlenecks) with gates, train arrivals and hidden goals.
-3. **The picture.** Every scene becomes a 64×64 map (0.25 m per cell, 5 frames per second): crowd density, walls, exits, gates and arrivals.
-4. **The model.** A recurrent memory that watches the frames, then predicts how people *move* between neighbouring cells. People can't vanish, appear from nowhere or walk through walls. A small random "mood" variable lets it imagine several possible futures.
-5. **Real data.** It's fine-tuned on real recordings (Jülich lab experiments, Eindhoven Centraal station platform), always tested on runs and days it never saw. Synthetic scenes are also shown through smaller "camera views", so it learns that people walk in and out at the edge of the picture.
+1. **Simulator**: [JuPedSim](https://www.jupedsim.org), tuned to real crowd experiments.
+2. **Training data**: 15,000 simulated halls, platforms and bottlenecks with gates and train arrivals.
+3. **Model**: watches 64×64 crowd maps and predicts how people move between neighbouring cells. People can't vanish or walk through walls.
+4. **Real data**: fine-tuned on Jülich lab experiments and the Eindhoven Centraal station platform. Always tested on runs and days it never saw.
 
 ## Results
 
-Error 10 s ahead, compared with assuming "nothing moves" (1.00 means no better; lower is better):
+**"What if?"** (1,034 test moments; every method sees only 2 s of positions):
 
-| Test set (never seen in training) | Keep walking straight | **This model** |
+| Method | Effect of a gate change: direction right | Finds the right gate change when one helps | Picks the least crowded plan |
+|---|---|---|---|
+| Never touch the gates | – | 0% | 72% |
+| Simulator, everyone to the nearest exit | 83% | 47% | 77% |
+| Simulator, exit guessed from walking direction | 79% | 58% | 74% |
+| **This model** | **93%** | **80%** | **80%** |
+
+**Forecasting**, error 10 s ahead relative to "nothing moves" (lower is better):
+
+| Test set | Keep walking straight | **This model** |
 |---|---|---|
-| Synthetic scenes | 1.25 | **0.55** |
-| Jülich bottlenecks | 1.52 | **0.51** |
-| Lab crossings | 1.39 | **0.79** |
-| Eindhoven platform (days 7–9) | 1.30 | **0.86** |
+| Synthetic | 1.25 | **0.55** |
+| Jülich bottlenecks (real) | 1.52 | **0.51** |
+| Lab crossings (real) | 1.39 | **0.79** |
+| Eindhoven platform (real) | 1.30 | **0.86** |
 
-**"What if?" questions** (1,034 held-out moments, each re-simulated under 2–3 gate plans):
+**Also:**
+- It guesses destinations correctly 85–88% of the time on real crowds.
+- It ranks which crowd is more rushed correctly in 10 of 11 real experiments.
+- Its 80% headcount range holds 76–83% of the time.
 
-- **Direction of a gate action's effect:** correct 93% of the time, for each exit. It predicts about 73% of the true size.
-- **Picking the safest plan:** when changing a gate truly makes things safer, the AI finds the right change 80% of the time. Overall it picks the least-crowded plan 80% of the time, versus 72% for "never touch the gates" and 49% for a random pick.
-- **Crowd map 10 s ahead:** 0.28 against "nothing moves".
-
-**Other skills:**
-
-- **Guessing destinations:** 96% correct on synthetic scenes, 88% on real crossings, 85% on the real platform.
-- **Guessing hurry:** it ranks the more motivated crowd correctly in 10 of 11 real experiment pairs.
-- **Headcount ranges:** its 80% range contains the real headcount 10 s later in 76–83% of test cases (66% at crossings). The range is calibrated on training runs.
-- **People in and out:** over 10 s it gets the flow budget roughly right (Eindhoven: 17 in and 18 out for real, vs 20 and 22 predicted).
-- **Danger odds:** much better than guessing on synthetic scenes, Jülich and crossings; no better than guessing on the Eindhoven platform.
-
-**Limitations:** it predicts crowd density, not individual people. It can't see surges coming, such as a group still downstairs about to walk up, so its forecast is a smooth average. On the real platform it is only modestly better than "nothing moves". Its own imagined futures vary too little in headcount, so the ranges come from calibration instead. The real datasets are small.
+**Limitations:**
+- It predicts density, not individuals.
+- It can't see surges coming (e.g. a group still downstairs), so on real platforms it's only modestly better than "nothing moves".
+- It underestimates how big a gate's effect is (about 73% of the true size).
+- The what-if results are measured in simulation.
 
 ## Run it
 
-Setup: [docs/SETUP.md](docs/SETUP.md) (conda, PyTorch with CUDA; tested on one 8 GB laptop GPU).
+Setup: [docs/SETUP.md](docs/SETUP.md) (one 8 GB GPU is enough).
 
 ```bash
-# 1. Tune the simulator to the real experiments
-python scripts/calibrate_sim.py
-
-# 2. Make synthetic data
+python scripts/calibrate_sim.py                      # tune the simulator
 python scripts/generate_scenes.py --n 6000 --start 0     --version v3 --family hall
 python scripts/generate_scenes.py --n 5000 --start 6000  --version v3 --family platform
 python scripts/generate_scenes.py --n 4000 --start 11000 --version v3 --family bottleneck
 python scripts/prepare_dataset.py --version v3
+python scripts/prepare_real.py                       # real data (raw files in data/raw)
 
-# 3. Convert real data (put the raw files in data/raw first)
-python scripts/prepare_real.py
-
-# 4. Train on synthetic data, then fine-tune on real data
 python scripts/train_wm.py --data v3 --name final_pre --z_dim 8 --beta 0.15 --prior_every 2 --prior_mean \
     --horizon 30 --batch 8 --steps 40000 --lr 3e-4
-python scripts/train_wm.py --data v3 --name final_real --init_from final_pre --z_dim 8 --beta 0.15 \
-    --prior_every 2 --prior_mean --horizon 30 --batch 8 --steps 5000 --lr 1e-4 \
-    --real juelich,crossing,eindhoven \
-    --real_holdout "caserne_bottleneck_2006__b120,caserne_bottleneck_2006__b200,hermes_bottleneck_2009__ao-360-400,crossing_90_d_2,crossing_90_d_8,crossing_90_e_3,day7_*,day8_*,day9_*"
-# (then two more 5000-step fine-tunes with the same settings: final_real_b from final_real,
-#  and final_real_c from final_real_b with --crop 0.5)
+# then fine-tune on real data three times (5000 steps each, --init_from the previous run,
+# --real juelich,crossing,eindhoven; the last one with --crop 0.5): final_real -> _b -> _c
 
-# 5. Test, calibrate headcount ranges, make GIFs
-python scripts/make_whatif.py --split test --per_scene 4      # what-if moments
+python scripts/final_check.py --run final_real_c     # forecasting results
+python scripts/make_whatif.py --split test --per_scene 4
 python scripts/eval_whatif.py --run final_real_c --save
+python scripts/baseline_whatif.py                    # simulator baselines
 python scripts/show_planner.py --run final_real_c --moment scene_001319_k225
-python scripts/final_check.py --run final_real_c
-python scripts/calibrate_bands.py --run final_real_c
-python scripts/show_people.py --run final_real_c --start typical --dir data/processed/real/juelich/caserne_bottleneck_2006__b120
 ```
 
-## Code
-
-| Folder | What's inside |
+| Folder | Contents |
 |---|---|
-| `src/crowdwm/sim/` | Scene generator and simulator helpers |
+| `src/crowdwm/sim/` | Scene generator, simulator helpers |
 | `src/crowdwm/data/` | Real-data loaders, training windows |
 | `src/crowdwm/model/` | The world model |
-| `src/crowdwm/raster*.py` | Turns people's positions into the 64×64 map |
 | `scripts/` | The steps above |
-| `tests/` | Checks: people are never created or lost, no walking through walls |
-
-## Coming next
-
-An online demo, and the what-if dataset as a public benchmark.
