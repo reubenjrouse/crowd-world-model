@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crowdwm"
+version = "0.0.1"
+description = "Action-conditioned crowd world model with hidden-state inference"
+requires-python = ">=3.11"
+# torch is installed separately (needs the CUDA-specific index URL); see docs/SETUP.md
+dependencies = [
+    "jupedsim",      # crowd simulator (fake crowds)
+    "pedpy",         # loads and measures real crowd recordings
+    "numpy",
+    "scipy",
+    "pandas",
+    "pyarrow",       # reads the Eindhoven parquet files
+    "h5py",          # reads Jülich geometry files
+    "shapely",       # walls, rooms, exits as shapes
+    "matplotlib",
+    "tqdm",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ipykernel", "jupyterlab"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

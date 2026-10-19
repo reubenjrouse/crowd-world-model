@@ -1,0 +1,30 @@
+# Data and outputs are large and reproducible, so keep them out of git
+data/raw/*
+data/processed/*
+outputs/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!outputs/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Environments and editors
+.venv/
+.env
+.vscode/
+.idea/
+
+# Experiment trackers / checkpoints
+*.pt
+*.ckpt
+wandb/
+runs/
+
+# Local dev notes and exploration scripts (kept on disk, not published)
+scripts/dev/
+docs/dev/

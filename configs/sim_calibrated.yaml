@@ -1,0 +1,15 @@
+model: CollisionFreeSpeedModel
+excluded_runs:
+- caserne_bottleneck_2006__b120
+- caserne_bottleneck_2006__b200
+- hermes_bottleneck_2009__ao-360-400
+radius: 0.2
+time_gap: 0.3
+speed_sd: 0.15
+desired_speed_by_series:
+  caserne_bottleneck_2006: 0.97
+  hermes_bottleneck_2009: 1.14
+rms_relative_flow_error: 0.10647181544100898
+rms_relative_flow_error_by_series:
+  caserne_bottleneck_2006: 0.06804197182786981
+  hermes_bottleneck_2009: 0.14490165905414815
